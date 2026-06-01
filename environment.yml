@@ -1,0 +1,68 @@
+name: egfr-env
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+
+  # Core data science
+  - numpy>=1.24,<2.0
+  - pandas>=2.0
+  - scipy>=1.11
+
+  # Cheminformatics — rdkit must come from conda-forge
+  - rdkit>=2023.09
+
+  # Classical ML
+  - scikit-learn>=1.3
+  - xgboost>=2.0
+  - lightgbm>=4.0
+
+  # Deep learning (pytorch channel handles platform-specific builds)
+  - pytorch::pytorch>=2.1
+
+  # Visualization & chemical space
+  - matplotlib>=3.7
+  - seaborn>=0.12
+  - umap-learn>=0.5
+  - plotly>=5.17
+
+  # Notebooks
+  - jupyter
+  - ipykernel
+  - ipywidgets
+
+  # Utilities
+  - tqdm
+  - pyyaml
+  - joblib
+
+  # Dev tools
+  - ruff>=0.4
+  - pytest>=7.0
+
+  - pip
+  - pip:
+    # PyTorch Geometric — GNNs from scratch
+    # torch_scatter/sparse/cluster omitted: build-from-source fails on macOS.
+    # torch_geometric>=2.4 is sufficient for GCN/GAT/MPNN without them.
+    - torch_geometric>=2.4
+
+    # Chemprop — D-MPNN benchmark (v2 API)
+    - chemprop>=2.0
+
+    # ChEMBL data access
+    - chembl_webresource_client>=0.10
+
+    # MLflow — experiment tracking & model registry
+    - mlflow>=2.10
+
+    # SHAP — feature importance & atom-level attribution
+    - shap>=0.44
+
+    # Uncertainty quantification
+    - mapie>=0.8
+
+    # App
+    - streamlit>=1.32

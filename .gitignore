@@ -216,3 +216,13 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Personal Claude instructions (not shared)
+CLAUDE.local.md
+CLAUDE.md
+
+# MLflow
+mlruns/
+.Claude
+models
+data
