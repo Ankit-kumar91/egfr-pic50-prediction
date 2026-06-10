@@ -44,6 +44,13 @@ _IC50_INTERMEDIATE_MAX = 10_000  # nM (inclusive upper bound)
 # Max allowed difference between our pIC50 and ChEMBL's pchembl_value.
 _PCHEMBL_TOLERANCE = 0.1
 
+# pIC50 physical plausibility bounds (2 = 10 mM, 12 = 1 pM).
+_PIC50_MIN = 2.0
+_PIC50_MAX = 12.0
+
+# Minimum heavy-atom count; anything below is too fragment-like for QSAR.
+_MIN_HEAVY_ATOMS = 5
+
 
 # ------------------------------------------------------------------
 # Logging setup
@@ -119,9 +126,11 @@ class ChEMBLFetcher:
         try:
             qs = new_client.activity.filter(
                 target_chembl_id=self.target_id,
+                assay_type="B",
                 standard_type="IC50",
                 standard_relation="=",
                 standard_units="nM",
+                target_organism="Homo sapiens",
             ).only(_FIELDS)
 
             total = qs.count()
@@ -165,9 +174,12 @@ class ChEMBLFetcher:
           3. Remove intermediate-activity zone (1,000–10,000 nM)
           4. Flag ChEMBL data-validity warnings (kept, logged)
           5. Compute pIC50 = 9 − log10(IC50_nM)
-          6. Validate against pchembl_value (flag disagreements)
-          7. Standardize SMILES: remove salts → keep largest fragment → RDKit canonical
-          8. Deduplicate: same compound across assays → mean pIC50
+          6. Filter pIC50 to physical range [2, 12]
+          7. Validate against pchembl_value (flag disagreements)
+          8. Standardize SMILES: remove salts → keep largest fragment → RDKit canonical
+          9. Remove inorganic molecules (no carbon atoms)
+         10. Remove fragment-like molecules (< 5 heavy atoms)
+         11. Deduplicate: same compound across assays → mean pIC50
         """
         if df.empty:
             logger.warning("curate() received an empty DataFrame — returning as-is")
@@ -181,8 +193,11 @@ class ChEMBLFetcher:
             df = self._remove_intermediate_activity(df)
             df = self._flag_validity_comments(df)
             df = self._compute_pic50(df)
+            df = self._filter_pic50_range(df)
             df = self._validate_pchembl(df)
             df = self._standardize_smiles(df)
+            df = self._remove_inorganic_mols(df)
+            df = self._remove_small_molecules(df)
             df = self._deduplicate(df)
         except Exception as exc:
             logger.error("Curation pipeline failed: %s", exc, exc_info=True)
@@ -286,6 +301,15 @@ class ChEMBLFetcher:
         df["pic50"] = 9.0 - df["standard_value"].apply(math.log10)
         return df
 
+    def _filter_pic50_range(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Keep only pIC50 in [2, 12] — outside this range likely reflects assay artifacts."""
+        before = len(df)
+        df = df[(df["pic50"] >= _PIC50_MIN) & (df["pic50"] <= _PIC50_MAX)].copy()
+        self._log_step(
+            f"filter pIC50 range [{_PIC50_MIN}, {_PIC50_MAX}]", before, len(df)
+        )
+        return df
+
     def _validate_pchembl(self, df: pd.DataFrame) -> pd.DataFrame:
         """Compare computed pIC50 against ChEMBL's pchembl_value.
 
@@ -330,6 +354,42 @@ class ChEMBLFetcher:
         df["canonical_smiles"] = df["canonical_smiles"].apply(_standardize_smiles_str)
         df = df.dropna(subset=["canonical_smiles"]).copy()
         self._log_step("standardize SMILES (desalt + canonicalize)", before, len(df))
+        return df
+
+    def _remove_inorganic_mols(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove molecules without any carbon atoms (metal salts, inorganic complexes)."""
+        before = len(df)
+
+        def has_carbon(smiles: str) -> bool:
+            try:
+                mol = Chem.MolFromSmiles(smiles)
+                return mol is not None and any(
+                    a.GetAtomicNum() == 6 for a in mol.GetAtoms()
+                )
+            except Exception:
+                return False
+
+        df = df[df["canonical_smiles"].apply(has_carbon)].copy()
+        self._log_step("remove inorganic molecules (no carbon)", before, len(df))
+        return df
+
+    def _remove_small_molecules(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Remove fragment-like molecules with fewer than _MIN_HEAVY_ATOMS heavy atoms."""
+        before = len(df)
+
+        def heavy_atom_count(smiles: str) -> int:
+            try:
+                mol = Chem.MolFromSmiles(smiles)
+                return mol.GetNumAtoms() if mol else 0
+            except Exception:
+                return 0
+
+        df = df[
+            df["canonical_smiles"].apply(heavy_atom_count) >= _MIN_HEAVY_ATOMS
+        ].copy()
+        self._log_step(
+            f"remove small molecules (<{_MIN_HEAVY_ATOMS} heavy atoms)", before, len(df)
+        )
         return df
 
     def _deduplicate(self, df: pd.DataFrame) -> pd.DataFrame:
