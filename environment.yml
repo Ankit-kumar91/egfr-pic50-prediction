@@ -33,6 +33,7 @@ dependencies:
   - jupyter
   - ipykernel
   - ipywidgets
+  - anywidget
 
   # Utilities
   - tqdm
