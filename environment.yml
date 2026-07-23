@@ -7,7 +7,7 @@ dependencies:
   - python=3.11
 
   # Core data science
-  - numpy>=1.24,<2.0
+  - numpy>=2.0
   - pandas>=2.0
   - polars>=1.0
   - scipy>=1.11
@@ -20,8 +20,12 @@ dependencies:
   - xgboost>=2.0
   - lightgbm>=4.0
 
-  # Deep learning (pytorch channel handles platform-specific builds)
-  - pytorch::pytorch>=2.1
+  # Deep learning — must come from conda-forge, not the `pytorch` channel:
+  # pytorch-channel builds through 2.2.x were compiled against numpy 1.x and
+  # silently break torch.from_numpy()/tensor.numpy() under numpy>=2, which
+  # scikit-learn/scipy's conda-forge builds require. conda-forge's pytorch
+  # builds are numpy2-compatible.
+  - conda-forge::pytorch>=2.6
 
   # Visualization & chemical space
   - matplotlib>=3.7

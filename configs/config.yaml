@@ -1,0 +1,36 @@
+seed: 42
+
+data:
+  curated_csv: data/curated_dataset.csv
+  splits_dir: data/splits
+
+split:
+  train_frac: 0.8
+  val_frac: 0.1
+  test_frac: 0.1
+
+features:
+  ecfp_radius: 2
+  ecfp_n_bits: 2048
+
+applicability_domain:
+  tanimoto_threshold: 0.4
+
+gnn:
+  hidden_dim: 128
+  depth: 3
+  dropout: 0.2
+  lr: 0.001
+  batch_size: 64
+  epochs: 150
+  patience: 20
+  mc_dropout_samples: 30
+
+mlflow:
+  experiment_name: egfr_pic50_classical_ml
+  gnn_experiment_name: egfr_pic50_gnn
+  chemprop_experiment_name: egfr_pic50_chemprop
+  tracking_uri: sqlite:///mlruns/mlflow.db
+
+models_dir: models
+results_dir: results
