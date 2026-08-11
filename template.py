@@ -36,12 +36,10 @@ list_of_dirs =[
  ]
 
 
-# Create directories 
 for dir_path in list_of_dirs:
     os.makedirs(dir_path, exist_ok=True)
     logging.info(f"Directory created: {dir_path}")
 
-# Create files
 for file in list_of_files:
     file = Path(file)
     file.parent.mkdir(parents=True, exist_ok=True)

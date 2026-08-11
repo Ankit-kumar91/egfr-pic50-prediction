@@ -1,3 +1,5 @@
+.DS_Store
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
@@ -221,8 +223,17 @@ __marimo__/
 CLAUDE.local.md
 CLAUDE.md
 
-# MLflow
+# Weights & Biases
+wandb/
+
+# Old MLflow runs (no longer used, see wandb/ above)
 mlruns/
+mlflow.db
 .Claude
 models
 data
+
+# LinkedIn carousel: promo material, not part of the project. Generator
+# script and its output both live outside the repo now (~/Desktop).
+results/linkedin_carousel/
+scripts/make_linkedin_slides.py

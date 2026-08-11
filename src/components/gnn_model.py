@@ -35,6 +35,13 @@ def _one_hot(value, choices) -> list[float]:
 
 
 def _atom_features(atom: Chem.Atom) -> list[float]:
+    """Per-atom feature vector fed into the GNN as a node feature.
+
+    One-hot element identity (plus an "other element" catch-all bit),
+    one-hot hybridization (plus catch-all), one-hot degree (bonded-neighbor
+    count), an aromaticity flag, and normalized implicit hydrogen count.
+    NODE_DIM above must match this layout.
+    """
     return (
         _one_hot(atom.GetAtomicNum(), _ATOM_LIST)
         + [1.0 if atom.GetAtomicNum() not in _ATOM_LIST else 0.0]
@@ -47,6 +54,8 @@ def _atom_features(atom: Chem.Atom) -> list[float]:
 
 
 def _bond_features(bond: Chem.Bond) -> list[float]:
+    """Per-bond feature vector fed into the GNN as an edge feature: one-hot
+    bond type, plus conjugation and ring-membership flags."""
     return (
         _one_hot(bond.GetBondType(), _BOND_TYPES)
         + [1.0 if bond.GetIsConjugated() else 0.0]
@@ -62,6 +71,9 @@ def mol_to_graph(smiles: str, y: float | None = None) -> Data | None:
 
     x = torch.tensor([_atom_features(a) for a in mol.GetAtoms()], dtype=torch.float)
 
+    # Each bond becomes two directed edges (i->j and j->i) with the same
+    # features, since message passing needs both directions to propagate
+    # information across the whole molecule.
     edge_index, edge_attr = [], []
     for bond in mol.GetBonds():
         i, j = bond.GetBeginAtomIdx(), bond.GetEndAtomIdx()
@@ -108,12 +120,19 @@ class MPNNConv(MessagePassing):
         )
 
     def forward(self, x, edge_index, edge_attr):
+        # PyG's propagate() calls message() for every edge, aggregates the
+        # results per target node (mean, set in __init__), then calls update().
         return self.propagate(edge_index, x=x, edge_attr=edge_attr)
 
     def message(self, x_j, edge_attr):
+        # x_j: the *sender* node's features for each edge. Concatenating with
+        # edge_attr is what makes this an MPNN rather than a plain GCN/GAT —
+        # the message depends on bond type/conjugation/ring membership too.
         return self.message_mlp(torch.cat([x_j, edge_attr], dim=-1))
 
     def update(self, aggr_out, x):
+        # Combine each node's own previous features with its aggregated
+        # incoming messages to produce the new node representation.
         return self.update_mlp(torch.cat([x, aggr_out], dim=-1))
 
 

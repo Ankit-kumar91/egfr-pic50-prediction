@@ -1,4 +1,4 @@
-"""Train the from-scratch MPNN on the scaffold split, log to MLflow.
+"""Train the from-scratch MPNN on the scaffold split, log to W&B.
 
 Local smoke test:
     python scripts/train_gnn.py --epochs 5 --device cpu
@@ -11,8 +11,8 @@ import argparse
 from pathlib import Path
 
 import joblib
-import mlflow
 import pandas as pd
+import wandb
 import yaml
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -75,6 +75,9 @@ def main() -> None:
     val_metrics = regression_metrics(val_true, val_pred)
     test_metrics = regression_metrics(test_true, test_pred)
 
+    # Flag test molecules that are structurally far from anything in train,
+    # so the reported test metrics can be read alongside how much of the
+    # test set the model was actually equipped to predict well.
     test_smiles = [test_df["smiles"].iloc[i] for i in range(len(test_g))]
     train_smiles = [train_df["smiles"].iloc[i] for i in range(len(train_g))]
     _, in_domain = applicability_domain(
@@ -87,41 +90,47 @@ def main() -> None:
     print("test:", test_metrics)
     print("test AD in-domain frac:", in_domain.mean())
 
-    mlflow.set_tracking_uri(
-        config["mlflow"]["tracking_uri"].replace("sqlite:///", f"sqlite:///{ROOT}/")
+    run = wandb.init(
+        project=config["wandb"]["project"],
+        job_type="gnn",
+        group=args.split,
+        name=f"mpnn_{args.split}",
+        config={
+            "model_type": "mpnn_scratch",
+            "split_type": args.split,
+            "descriptor_type": "graph",
+            "seed": config["seed"],
+            "n_train": len(train_g),
+            "n_val": len(val_g),
+            "n_test": len(test_g),
+            "device": args.device,
+            "epochs_run": history[-1]["epoch"] + 1,
+            **gnn_cfg,
+        },
     )
-    experiment = config["mlflow"]["gnn_experiment_name"]
-    if mlflow.get_experiment_by_name(experiment) is None:
-        mlflow.create_experiment(
-            experiment, artifact_location=str(ROOT / "mlruns" / "artifacts")
-        )
-    mlflow.set_experiment(experiment)
-
-    with mlflow.start_run(run_name=f"mpnn_{args.split}"):
-        mlflow.log_params(
-            {
-                "model_type": "mpnn_scratch",
-                "split_type": args.split,
-                "descriptor_type": "graph",
-                "seed": config["seed"],
-                "n_train": len(train_g),
-                "n_val": len(val_g),
-                "n_test": len(test_g),
-                "device": args.device,
-                "epochs_run": history[-1]["epoch"] + 1,
-                **gnn_cfg,
-            }
-        )
-        mlflow.log_metrics({f"val_{k}": v for k, v in val_metrics.items()})
-        mlflow.log_metrics({f"test_{k}": v for k, v in test_metrics.items()})
-        mlflow.log_metric("test_mean_mc_std", test_std.mean())
-        mlflow.log_metric("test_ad_in_domain_frac", in_domain.mean())
-        mlflow.pytorch.log_model(model, name="model")
+    wandb.log({f"val_{k}": v for k, v in val_metrics.items()})
+    wandb.log({f"test_{k}": v for k, v in test_metrics.items()})
+    wandb.log(
+        {
+            "test_mean_mc_std": test_std.mean(),
+            "test_ad_in_domain_frac": in_domain.mean(),
+        }
+    )
 
     models_dir = ROOT / config["models_dir"]
     models_dir.mkdir(exist_ok=True)
-    joblib.dump(model.cpu(), models_dir / f"mpnn_{args.split}.joblib")
-    print(f"Saved -> {models_dir / f'mpnn_{args.split}.joblib'}")
+    model_path = models_dir / f"mpnn_{args.split}.joblib"
+    joblib.dump(model.cpu(), model_path)
+    print(f"Saved -> {model_path}")
+
+    # Register the checkpoint in the W&B model registry so the best MPNN run
+    # can be pulled by name later (e.g. for the model comparison notebook)
+    # instead of hunting through individual run artifacts.
+    artifact = wandb.Artifact(f"mpnn-{args.split}", type="model")
+    artifact.add_file(str(model_path))
+    logged = run.log_artifact(artifact)
+    run.link_artifact(logged, target_path="wandb-registry-model/egfr-pic50-mpnn")
+    wandb.finish()
 
 
 if __name__ == "__main__":

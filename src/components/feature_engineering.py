@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 from rdkit import Chem, DataStructs
 from rdkit.Chem import Descriptors, rdFingerprintGenerator
+from rdkit.Chem.Scaffolds import MurckoScaffold
 
 # Compact, standard drug-discovery descriptor set (avoids Descriptors.CalcMolDescriptors's
 # ~200 columns, most of which are redundant with each other for a QSAR model this size).
@@ -31,7 +32,15 @@ def ecfp_fingerprint(smiles: str, radius: int = 2, n_bits: int = 2048) -> np.nda
     return arr
 
 
+def murcko_scaffold(smiles: str) -> str:
+    """Canonical Murcko scaffold SMILES — CV group key for scaffold-aware splits."""
+    mol = Chem.MolFromSmiles(smiles)
+    scaf = MurckoScaffold.GetScaffoldForMol(mol)
+    return Chem.MolToSmiles(scaf)
+
+
 def rdkit_descriptors(smiles: str) -> np.ndarray:
+    """Physicochemical descriptor vector, in the fixed order of _DESCRIPTOR_FUNCS."""
     mol = Chem.MolFromSmiles(smiles)
     return np.array([f(mol) for f in _DESCRIPTOR_FUNCS.values()], dtype=float)
 
@@ -43,7 +52,13 @@ def featurize(
     radius: int = 2,
     n_bits: int = 2048,
 ) -> np.ndarray:
-    """kind: 'ecfp', 'descriptors', or 'both'."""
+    """Turn a DataFrame of SMILES into a feature matrix for classical ML models.
+
+    kind: 'ecfp' (structural fingerprint bits), 'descriptors' (physicochemical
+    properties), or 'both' (concatenated — fingerprints capture substructure
+    patterns, descriptors capture bulk properties like size/polarity that
+    fingerprints don't encode directly).
+    """
     smiles = df[smiles_col].tolist()
     parts = []
     if kind in ("ecfp", "both"):
@@ -56,6 +71,8 @@ def featurize(
 
 
 def descriptor_names(kind: str, n_bits: int = 2048) -> list[str]:
+    """Column names matching featurize()'s output, for feature importance
+    and SHAP plots."""
     names = []
     if kind in ("ecfp", "both"):
         names += [f"ecfp_{i}" for i in range(n_bits)]

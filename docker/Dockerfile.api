@@ -1,0 +1,52 @@
+# FastAPI backend.
+# Build: docker build -f docker/Dockerfile.api -t egfr-api .
+# Run:   docker run -p 8000:8000 egfr-api
+#
+# NOTE: models/ and data/ are gitignored in this repo (kept out of the
+# public GitHub history -- they're large training artifacts, not source).
+# The specific files this image needs must exist in the build context
+# before running `docker build`; see the "Deploying the web app" section
+# of the README for exactly which ones.
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-docker.txt .
+RUN pip install --no-cache-dir --user -r requirements-docker.txt
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+# Runtime libs RDKit's Draw module needs for headless rendering.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxrender1 libxext6 libsm6 libxss1 libgl1 libglib2.0-0 \
+    libfontconfig1 libice6 curl \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+COPY api/ ./api/
+COPY src/ ./src/
+COPY configs/ ./configs/
+COPY models/random_forest_scaffold.joblib ./models/random_forest_scaffold.joblib
+COPY models/chemeleon/scaffold/model_0/best.pt ./models/chemeleon/scaffold/model_0/best.pt
+COPY models/dmpnn/scaffold/model_0/best.pt ./models/dmpnn/scaffold/model_0/best.pt
+COPY data/splits/scaffold_train.csv ./data/splits/scaffold_train.csv
+
+EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8000/health || exit 1
+
+CMD ["uvicorn", "api.main:app", "--host", "0.0.0.0", "--port", "8000"]

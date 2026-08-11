@@ -1,0 +1,54 @@
+# Single-container deployment target for a free Hugging Face Space
+# (Space SDK: Docker). HF Spaces route all traffic to one container on
+# port 7860, so this runs the Streamlit UI only, predicting in-process
+# (no separate API container) -- the same shape as Dockerfile.streamlit,
+# just on HF's required port.
+#
+# NOTE: models/ and data/ are gitignored in the GitHub repo -- see
+# docker/Dockerfile.api's header comment. When creating the Space, add
+# those files directly to the Space's own repo (they don't come from
+# GitHub); see the README's "Deploying the web app" section.
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-docker.txt .
+RUN pip install --no-cache-dir --user -r requirements-docker.txt
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxrender1 libxext6 libsm6 libxss1 libgl1 libglib2.0-0 \
+    libfontconfig1 libice6 \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+COPY app.py ./app.py
+COPY src/ ./src/
+COPY configs/ ./configs/
+COPY models/random_forest_scaffold.joblib ./models/random_forest_scaffold.joblib
+COPY models/chemeleon/scaffold/model_0/best.pt ./models/chemeleon/scaffold/model_0/best.pt
+COPY models/dmpnn/scaffold/model_0/best.pt ./models/dmpnn/scaffold/model_0/best.pt
+COPY data/splits/scaffold_train.csv ./data/splits/scaffold_train.csv
+
+# HF Spaces requires port 7860.
+EXPOSE 7860
+
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=7860", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--browser.gatherUsageStats=false"]

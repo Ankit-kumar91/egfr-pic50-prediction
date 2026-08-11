@@ -52,11 +52,6 @@ _PIC50_MAX = 12.0
 _MIN_HEAVY_ATOMS = 5
 
 
-# ------------------------------------------------------------------
-# Logging setup
-# ------------------------------------------------------------------
-
-
 def setup_logging(level: int = logging.INFO) -> None:
     """Set up console + rotating file logging. Call once at the top of your script/notebook.
 
@@ -73,12 +68,10 @@ def setup_logging(level: int = logging.INFO) -> None:
     if root.handlers:
         return
 
-    # Console: clean, minimal format
     console = logging.StreamHandler()
     console.setLevel(level)
     console.setFormatter(logging.Formatter("%(levelname)-8s %(message)s"))
 
-    # File: full detail with timestamps, rotates at 5 MB, keeps 3 backups
     file_handler = logging.handlers.RotatingFileHandler(
         log_file, maxBytes=5 * 1024 * 1024, backupCount=3, encoding="utf-8"
     )
@@ -90,11 +83,6 @@ def setup_logging(level: int = logging.INFO) -> None:
     root.addHandler(console)
     root.addHandler(file_handler)
     logging.info("Logging started — log file: %s", log_file)
-
-
-# ------------------------------------------------------------------
-# Main class
-# ------------------------------------------------------------------
 
 
 class ChEMBLFetcher:
@@ -115,10 +103,6 @@ class ChEMBLFetcher:
     def __init__(self, target_id: str) -> None:
         self.target_id = target_id
         self.curation_log: list[dict] = []
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
 
     def fetch_raw(self) -> pd.DataFrame:
         """Fetch raw IC50 records from ChEMBL. Returns an uncurated DataFrame."""
@@ -239,10 +223,6 @@ class ChEMBLFetcher:
             logger.error("Failed to save curated data to %s: %s", path, exc)
             raise
         return path
-
-    # ------------------------------------------------------------------
-    # Curation steps (called in order by curate())
-    # ------------------------------------------------------------------
 
     def _validate_api_filters(self, df: pd.DataFrame) -> pd.DataFrame:
         """Confirm API-level filters were honoured (sanity check)."""
@@ -408,10 +388,6 @@ class ChEMBLFetcher:
         self._log_step("deduplicate (unique compounds)", before, len(df))
         return df
 
-    # ------------------------------------------------------------------
-    # Helpers
-    # ------------------------------------------------------------------
-
     def _log_step(self, step_name: str, before: int, remaining: int) -> None:
         removed = before - remaining
         self.curation_log.append(
@@ -455,11 +431,6 @@ class ChEMBLFetcher:
                 )
                 time.sleep(delay)
         return []  # unreachable; satisfies type checker
-
-
-# ------------------------------------------------------------------
-# Module-level SMILES helper
-# ------------------------------------------------------------------
 
 
 def _standardize_smiles_str(smiles: str) -> str | None:

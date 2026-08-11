@@ -26,11 +26,8 @@ gnn:
   patience: 20
   mc_dropout_samples: 30
 
-mlflow:
-  experiment_name: egfr_pic50_classical_ml
-  gnn_experiment_name: egfr_pic50_gnn
-  chemprop_experiment_name: egfr_pic50_chemprop
-  tracking_uri: sqlite:///mlruns/mlflow.db
+wandb:
+  project: egfr-pic50-prediction
 
 models_dir: models
 results_dir: results

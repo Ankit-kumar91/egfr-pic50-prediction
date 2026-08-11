@@ -1,0 +1,53 @@
+# Streamlit UI, standalone (predicts in-process; set API_URL + the "Use API
+# backend" checkbox to talk to Dockerfile.api's container instead).
+# Build: docker build -f docker/Dockerfile.streamlit -t egfr-streamlit .
+# Run:   docker run -p 8501:8501 egfr-streamlit
+#
+# NOTE: models/ and data/ are gitignored in this repo -- see
+# docker/Dockerfile.api's header comment.
+
+FROM python:3.11-slim AS builder
+
+WORKDIR /build
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+COPY requirements-docker.txt .
+RUN pip install --no-cache-dir --user -r requirements-docker.txt
+
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+ENV PYTHONPATH=/app
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libxrender1 libxext6 libsm6 libxss1 libgl1 libglib2.0-0 \
+    libfontconfig1 libice6 curl \
+    && rm -rf /var/lib/apt/lists/* && apt-get clean
+
+COPY --from=builder /root/.local /root/.local
+ENV PATH=/root/.local/bin:$PATH
+
+COPY app.py ./app.py
+COPY src/ ./src/
+COPY configs/ ./configs/
+COPY models/random_forest_scaffold.joblib ./models/random_forest_scaffold.joblib
+COPY models/chemeleon/scaffold/model_0/best.pt ./models/chemeleon/scaffold/model_0/best.pt
+COPY models/dmpnn/scaffold/model_0/best.pt ./models/dmpnn/scaffold/model_0/best.pt
+COPY data/splits/scaffold_train.csv ./data/splits/scaffold_train.csv
+
+EXPOSE 8501
+
+HEALTHCHECK --interval=30s --timeout=10s --start-period=15s --retries=3 \
+    CMD curl -f http://localhost:8501/_stcore/health || exit 1
+
+CMD ["streamlit", "run", "app.py", \
+     "--server.port=8501", \
+     "--server.address=0.0.0.0", \
+     "--server.headless=true", \
+     "--browser.gatherUsageStats=false"]

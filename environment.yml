@@ -55,14 +55,15 @@ dependencies:
     # torch_geometric>=2.4 is sufficient for GCN/GAT/MPNN without them.
     - torch_geometric>=2.4
 
-    # Chemprop — D-MPNN benchmark (v2 API)
-    - chemprop>=2.0
+    # Chemprop — D-MPNN benchmark (v2 API). >=2.2 required for
+    # --from-foundation CHEMELEON fine-tuning.
+    - chemprop>=2.2
 
     # ChEMBL data access
     - chembl_webresource_client>=0.10
 
-    # MLflow — experiment tracking & model registry
-    - mlflow>=2.10
+    # Weights & Biases — experiment tracking & model registry
+    - wandb>=0.17
 
     # SHAP — feature importance & atom-level attribution
     - shap>=0.44

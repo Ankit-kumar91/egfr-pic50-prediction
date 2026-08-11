@@ -1,13 +1,20 @@
-"""Train chemprop's D-MPNN from scratch, evaluate it like the other model
-tracks, and log to Weights & Biases.
+"""Fine-tune the CheMeleon foundation model on the EGFR pIC50 data.
 
-Plain run:
-    python scripts/train_chemprop.py --epochs 50 --accelerator gpu
+CheMeleon is a D-MPNN pretrained on ~1M PubChem molecules (to predict Mordred
+descriptors). `--from-foundation CHEMELEON` loads those pretrained message-
+passing weights and continues training them on our small EGFR set, instead of
+starting from random weights like scripts/train_chemprop.py does. This is the
+whole reason to bother on a small dataset. Needs chemprop >= 2.2; the
+checkpoint is downloaded and cached automatically on first use.
 
-Train with the best hyperparameters found by scripts/hpopt_chemprop.py:
-    python scripts/train_chemprop.py \\
-        --config-path models/chemprop/hpopt/scaffold/best_config.toml \\
-        --accelerator gpu
+    python scripts/finetune_chemeleon.py --accelerator gpu --epochs 30
+
+Note: chemprop 2.2.3's `--freeze-encoder` only works with `--checkpoint`, not
+`--from-foundation` — combining them raises `ArgumentError` (verified by
+actually running it, not just reading --help). So there's no CLI-only way to
+freeze CheMeleon's encoder here. If fine-tuning overfits on this small a
+dataset, the two options that do work are lowering --patience or lowering
+--epochs, not freezing.
 """
 
 import argparse
@@ -22,7 +29,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from src.components.model_evaluator import applicability_domain, regression_metrics
+from src.components.model_evaluator import regression_metrics
 
 
 def run(cmd: list[str]) -> None:
@@ -34,7 +41,7 @@ def main() -> None:
     config = yaml.safe_load((ROOT / "configs" / "config.yaml").read_text())
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--epochs", type=int, default=50)
+    parser.add_argument("--epochs", type=int, default=30)
     parser.add_argument(
         "--patience",
         type=int,
@@ -45,12 +52,6 @@ def main() -> None:
     parser.add_argument("--accelerator", default="cpu", choices=["cpu", "gpu", "auto"])
     parser.add_argument("--devices", default="1")
     parser.add_argument("--split", default="scaffold", choices=["scaffold", "random"])
-    parser.add_argument(
-        "--config-path",
-        default=None,
-        help="best_config.toml from hpopt_chemprop.py. Supplies the tuned "
-        "hyperparameters; omit to use chemprop defaults.",
-    )
     args = parser.parse_args()
 
     splits_dir = ROOT / config["data"]["splits_dir"]
@@ -58,7 +59,7 @@ def main() -> None:
     val_csv = splits_dir / f"{args.split}_val.csv"
     test_csv = splits_dir / f"{args.split}_test.csv"
 
-    out_dir = ROOT / config["models_dir"] / "chemprop" / "dmpnn" / args.split
+    out_dir = ROOT / config["models_dir"] / "chemprop" / "chemeleon" / args.split
     out_dir.mkdir(parents=True, exist_ok=True)
 
     train_cmd = [
@@ -73,9 +74,6 @@ def main() -> None:
         "--target-columns",
         "pIC50",
         "-t",
-        # regression-mve: model outputs a predicted variance alongside the
-        # point estimate (mean-variance estimation), which is what gives us
-        # the uncertainty this project requires on every prediction.
         "regression-mve",
         "--metrics",
         "rmse",
@@ -93,11 +91,16 @@ def main() -> None:
         str(config["seed"]),
         "--pytorch-seed",
         str(config["seed"]),
+        "--from-foundation",
+        "CHEMELEON",
+        # CheMeleon was pretrained with this atom featurizer; chemprop errors
+        # out if it doesn't match. Happens to be the CLI default too, but
+        # pinned explicitly since this one is a hard requirement, not a knob.
+        "--multi-hot-atom-featurizer-mode",
+        "V2",
         "-o",
         str(out_dir),
     ]
-    if args.config_path:
-        train_cmd += ["--config-path", args.config_path]
     run(train_cmd)
 
     checkpoint = out_dir / "model_0" / "best.pt"
@@ -133,28 +136,26 @@ def predict(checkpoint: Path, csv_path: Path, pred_path: Path) -> pd.DataFrame:
 
 
 def log_run(config, args, train_csv, val_df, test_df, checkpoint) -> None:
-    """Compute metrics + AD coverage and log everything to W&B."""
+    """Compute metrics and log everything to W&B.
+
+    AD is deliberately not computed here — it's checked later in a local
+    notebook, not on the GCP training box.
+    """
     val_metrics = regression_metrics(val_df["pIC50_true"], val_df["pIC50_pred"])
     test_metrics = regression_metrics(test_df["pIC50_true"], test_df["pIC50_pred"])
-
     train_smiles = pd.read_csv(train_csv)["smiles"]
-    _, in_domain = applicability_domain(
-        test_df["smiles"],
-        train_smiles,
-        threshold=config["applicability_domain"]["tanimoto_threshold"],
-    )
+
     print("val:", val_metrics)
     print("test:", test_metrics)
-    print("test AD in-domain frac:", in_domain.mean())
 
     run = wandb.init(
         project=config["wandb"]["project"],
         job_type="chemprop",
         group=args.split,
-        name=f"chemprop_dmpnn_{args.split}",
-        tags=["chemprop", args.split, "tuned" if args.config_path else "defaults"],
+        name=f"chemeleon_finetune_{args.split}",
+        tags=["chemprop", args.split, "chemeleon"],
         config={
-            "model_type": "chemprop_dmpnn",
+            "model_type": "chemeleon_finetune",
             "split_type": args.split,
             "descriptor_type": "learned_graph",
             "seed": config["seed"],
@@ -163,24 +164,16 @@ def log_run(config, args, train_csv, val_df, test_df, checkpoint) -> None:
             "n_test": len(test_df),
             "epochs": args.epochs,
             "patience": args.patience,
-            "config_path": args.config_path or "defaults",
         },
     )
     wandb.log({f"val_{k}": v for k, v in val_metrics.items()})
     wandb.log({f"test_{k}": v for k, v in test_metrics.items()})
-    wandb.log(
-        {
-            "test_mean_mve_variance": test_df["pIC50_unc"].mean(),
-            "test_ad_in_domain_frac": in_domain.mean(),
-        }
-    )
+    wandb.log({"test_mean_mve_variance": test_df["pIC50_unc"].mean()})
 
-    artifact = wandb.Artifact(f"chemprop-dmpnn-{args.split}", type="model")
+    artifact = wandb.Artifact(f"chemeleon-finetune-{args.split}", type="model")
     artifact.add_file(str(checkpoint))
     logged = run.log_artifact(artifact)
-    run.link_artifact(
-        logged, target_path="wandb-registry-model/egfr-pic50-chemprop-dmpnn"
-    )
+    run.link_artifact(logged, target_path="wandb-registry-model/egfr-pic50-chemeleon")
     wandb.finish()
 
     print(f"Checkpoint -> {checkpoint}")
